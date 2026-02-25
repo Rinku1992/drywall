@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 from json.decoder import JSONDecodeError
 
-from google.cloud import bigquery
+# from google.cloud import bigquery
 from google.cloud.storage import Client as CloudStorageClient
 import google.auth.transport.requests
 from google.oauth2.service_account import IDTokenCredentials

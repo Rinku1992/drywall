@@ -21,7 +21,7 @@ from pydantic_core import ValidationError
 from concurrent.futures import ThreadPoolExecutor
 
 from google.cloud.storage import Client as CloudStorageClient
-from google.cloud import secretmanager
+# from google.cloud import secretmanager
 import asyncio
 import pandas as pd
 import numpy as np

@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import google.auth.transport.requests
 from google.oauth2.service_account import IDTokenCredentials
-from google.cloud import secretmanager
+# from google.cloud import secretmanager
 
 from modeller_2d import FloorPlan2D
 from helper import (
