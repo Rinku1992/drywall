@@ -1,7 +1,7 @@
 import json
-import logging
 import hashlib
 import sys
+import os
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -10,6 +10,7 @@ import asyncpg
 import cv2
 from time import sleep
 from random import uniform
+from ruamel.yaml import YAML
 
 from google.cloud.storage import Client as CloudStorageClient
 import google.auth.transport.requests
@@ -34,12 +35,7 @@ def log_json(severity: str, message: str, **kwargs):
 
 @asynccontextmanager
 async def timed_step(step_name: str, request_id: str = "", **extra):
-    """Async context manager that logs step duration on exit.
-
-    Usage:
-        async with timed_step("download_floorplan", request_id=rid, plan_id=plan_id):
-            await do_work()
-    """
+    """Async context manager that logs step duration on exit."""
     start = time.perf_counter()
     log_json("INFO", "STEP_START", step=step_name, request_id=request_id, **extra)
     error_msg = None
@@ -59,11 +55,45 @@ async def timed_step(step_name: str, request_id: str = "", **extra):
 
 
 # ---------------------------------------------------------------------------
+# Configuration Loaders (called once at startup, cached)
+# ---------------------------------------------------------------------------
+
+def load_gcp_credentials() -> dict:
+    yaml = YAML(typ="safe", pure=True)
+    with open("gcp.yaml", 'r') as f:
+        credentials = yaml.load(f)
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials["service_drywall_account_key"]
+    return credentials
+
+
+def load_hyperparameters() -> dict:
+    yaml = YAML(typ="safe", pure=True)
+    with open("hyperparameters.yaml", 'r') as f:
+        hyperparameters = yaml.load(f)
+    return hyperparameters
+
+
+# ---------------------------------------------------------------------------
+# GCS Client (shared singleton — created once, reused everywhere)
+# ---------------------------------------------------------------------------
+
+_gcs_client = None
+
+def get_gcs_client() -> CloudStorageClient:
+    """Return a shared GCS client. Created once on first call."""
+    global _gcs_client
+    if _gcs_client is None:
+        _gcs_client = CloudStorageClient()
+        log_json("INFO", "GCS_CLIENT_CREATED")
+    return _gcs_client
+
+
+# ---------------------------------------------------------------------------
 # PostgreSQL Connection Pool
 # ---------------------------------------------------------------------------
 
 async def create_pg_pool(credentials) -> asyncpg.Pool:
-    """Create and return an asyncpg connection pool with graceful error handling."""
+    """Create and return an asyncpg connection pool."""
     pg_config = credentials["PostgreSQL"]
     try:
         pool = await asyncpg.create_pool(
@@ -146,6 +176,22 @@ async def pg_execute(pool: asyncpg.Pool, query: str, params: list = None,
 
 
 # ---------------------------------------------------------------------------
+# JSONB Helper
+# ---------------------------------------------------------------------------
+
+def parse_jsonb(value):
+    """Safely parse a JSONB value from asyncpg (could be str, dict, or None)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return value  # already a dict/list from asyncpg
+
+
+# ---------------------------------------------------------------------------
 # Database Operations (migrated from BigQuery)
 # ---------------------------------------------------------------------------
 
@@ -162,7 +208,7 @@ async def insert_model_2d(
     credentials
 ):
     """Upsert a 2D model into the models table.
-    BQ MERGE → PG INSERT ... ON CONFLICT.
+    BQ MERGE → PG INSERT ... ON CONFLICT using index name.
     """
     page_number = int(page_number)
 
@@ -174,9 +220,10 @@ async def insert_model_2d(
             [project_id, plan_id, page_number],
             query_name="insert_model_2d__fetch_metadata"
         )
-        if row and row["metadata"] is not None:
-            metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
-            model_2d["metadata"] = metadata
+        if row:
+            metadata = parse_jsonb(row["metadata"])
+            if metadata:
+                model_2d["metadata"] = metadata
 
     model_2d_json = json.dumps(model_2d)
     source = GCS_URL_floorplan_page or ''
@@ -195,7 +242,7 @@ async def insert_model_2d(
             $6::jsonb, '{}'::jsonb, '{}'::jsonb, $7, $8,
             NOW(), NOW()
         )
-        ON CONFLICT (LOWER(project_id), LOWER(plan_id), page_number)
+        ON CONFLICT ON CONSTRAINT idx_models_project_plan_page
         DO UPDATE SET
             model_2d = EXCLUDED.model_2d,
             scale = CASE WHEN EXCLUDED.scale = '' THEN models.scale ELSE EXCLUDED.scale END,
@@ -249,7 +296,7 @@ def sha256(path, chunk_size=8192):
 
 
 def upload_floorplan(plan_path, plan_id, project_id, credentials, index=None, directory=None):
-    client = CloudStorageClient()
+    client = get_gcs_client()
     page_number = Path(plan_path.stem).suffix
     if page_number:
         blob_object_name = Path(str(plan_path).replace(page_number, '')).name
@@ -294,6 +341,9 @@ def load_vertex_ai_client(credentials, region="us-central1"):
 def classify_plan(plan_path, vertex_ai_client_parameters):
     vertex_ai_client, vertex_ai_generation_config, vertex_ai_max_retry = vertex_ai_client_parameters
     plan_BGR = cv2.imread(plan_path)
+    if plan_BGR is None:
+        log_json("ERROR", "CLASSIFY_PLAN_FAILED", error=f"Could not read image: {plan_path}")
+        return {"plan_type": "UNKNOWN", "confidence": 0.0}
     _, canvas_buffer_array = cv2.imencode(".png", plan_BGR)
     bytes_canvas = canvas_buffer_array.tobytes()
     system = Content(role="model", parts=[Part.from_text(ARCHITECTURAL_DRAWING_CLASSIFIER)])
@@ -314,9 +364,15 @@ def classify_plan(plan_path, vertex_ai_client_parameters):
             classification = json.loads(response_text)
             validated = ArchitecturalDrawingClassifierResponse(**classification)
             return validated.model_dump()
-        except (ResourceExhausted, ServiceUnavailable, DeadlineExceeded):
+        except (ResourceExhausted, ServiceUnavailable, DeadlineExceeded) as e:
+            log_json("WARNING", "CLASSIFY_PLAN_RETRY", attempt=attempt + 1,
+                     max_retry=vertex_ai_max_retry, error=str(e))
             sleep(uniform(1, 3))
-        except Exception:
+        except Exception as e:
+            log_json("WARNING", "CLASSIFY_PLAN_RETRY", attempt=attempt + 1,
+                     max_retry=vertex_ai_max_retry, error=str(e))
             sleep(uniform(1, 3))
 
+    log_json("ERROR", "CLASSIFY_PLAN_EXHAUSTED", plan_path=str(plan_path),
+             max_retry=vertex_ai_max_retry)
     return {"plan_type": "UNKNOWN", "confidence": 0.0}
