@@ -242,7 +242,8 @@ async def insert_model_2d(
             $6::jsonb, '{}'::jsonb, '{}'::jsonb, $7, $8,
             NOW(), NOW()
         )
-        ON CONFLICT ON CONSTRAINT idx_models_project_plan_page
+        # ON CONFLICT ON CONSTRAINT idx_models_project_plan_page
+        ON CONFLICT (LOWER(project_id), LOWER(plan_id), page_number)
         DO UPDATE SET
             model_2d = EXCLUDED.model_2d,
             scale = CASE WHEN EXCLUDED.scale = '' THEN models.scale ELSE EXCLUDED.scale END,
