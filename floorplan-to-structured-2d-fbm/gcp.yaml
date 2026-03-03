@@ -28,20 +28,25 @@ VertexAI:
             - asia-northeast3: [37.5665, 126.9780]
             - asia-south1: [19.0760, 72.8777]
             - asia-southeast1: [1.3521, 103.8198]
-            - australia-southeast1: [-33.8688, 151.2093] 
+            - australia-southeast1: [-33.8688, 151.2093]
         parameters:
             temperature: 0
         max_retry: 5
 
-GBQServer:
-    service_account_key: *service_compute_account_key
-    KMS_key: projects/prj-fbm-drywall-dev/locations/us/keyRings/prj-fbm-drywall-dev-us-key-ring/cryptoKeys/prj-fbm-drywall-dev-us-key
-    table_name_projects: drywall_takeoff.projects
-    table_name_plans: drywall_takeoff.plans
-    table_name_models: drywall_takeoff.models
-    table_name_sku: drywall_takeoff.sku
-    table_name_model_revisions_2d: drywall_takeoff.model_revisions_2d
-    table_name_model_revisions_3d: drywall_takeoff.model_revisions_3d
+PostgreSQL:
+    host: 10.132.0.3
+    port: 5432
+    database: drywall_takeoff
+    user: postgres
+    password: Drywall@2026
+    min_pool_size: 2
+    max_pool_size: 10
+    table_name_projects: projects
+    table_name_plans: plans
+    table_name_models: models
+    table_name_sku: sku
+    table_name_model_revisions_2d: model_revisions_2d
+    table_name_model_revisions_3d: model_revisions_3d
 
 CloudStorage:
     bucket_name: drywall-takeoff-artifacts-dev
