@@ -104,17 +104,22 @@ def floorplan_to_structured_2d(credentials, id_token, project_id, plan_id, user_
         "Authorization": f"Bearer {id_token}",
         "Content-Type": "application/json"
     }
-    requests.post(
-        f"{credentials['CloudRun']['APIs']['floorplan_to_structured_2d']}/floorplan_to_structured_2d",
-        headers=headers,
-        json=dict(
-            project_id=project_id,
-            plan_id=plan_id,
-            user_id=user_id,
-            page_number=page_number
+    try:
+        requests.post(
+            f"{credentials['CloudRun']['APIs']['floorplan_to_structured_2d']}/floorplan_to_structured_2d",
+            headers=headers,
+            json=dict(
+                project_id=project_id,
+                plan_id=plan_id,
+                user_id=user_id,
+                page_number=page_number
+            ),
+            timeout=1800,
         )
-    )
-
+    except Exception as e:
+        log_json("WARNING", "FLOORPLAN_TO_2D_CALL_FAILED",
+                 page_number=page_number, error=str(e))
+        
 
 def get_params(request_query_params, body):
     """Merge query params and body into a single dict. Query params take priority."""
