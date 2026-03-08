@@ -343,7 +343,7 @@ async def floorplan_to_2d(request: Request):
         log_json("ERROR", "INSERT_MODEL_2D_FAILED",
                  request_id=rid, page_number=page_number, error=f"{type(e).__name__}: {e}")
 
-    asyncio.ensure_future(_safe_insert())
+   
 
     log_json("INFO", "REQUEST_COMPLETE", request_id=rid,
              endpoint="/floorplan_to_structured_2d",
