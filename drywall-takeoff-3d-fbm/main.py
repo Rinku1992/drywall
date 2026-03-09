@@ -64,7 +64,7 @@ def validate_required(params: dict, required_fields: list, endpoint: str, rid: s
     """Validate required fields exist and are non-empty.
     Returns (True, None) if valid, (False, JSONResponse) if invalid.
     """
-    missing = [f for f in required_fields if not params.get(f)]
+    missing = [f for f in required_fields if params.get(f) is None]
     if missing:
         log_json("WARNING", "VALIDATION_FAILED", request_id=rid, endpoint=endpoint,
                  missing_fields=missing)
