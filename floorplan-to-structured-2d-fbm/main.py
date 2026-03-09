@@ -49,7 +49,7 @@ def respond_with_UI_payload(payload, status_code=200):
 
 
 def validate_required(params: dict, required_fields: list, endpoint: str, rid: str):
-    missing = [f for f in required_fields if not params.get(f)]
+    missing = [f for f in required_fields if params.get(f) is None]
     if missing:
         log_json("WARNING", "VALIDATION_FAILED", request_id=rid, endpoint=endpoint,
                  missing_fields=missing)
