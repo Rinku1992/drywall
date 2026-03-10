@@ -337,11 +337,20 @@ def phoenix_call(generate_content_lambda, max_retry=5, base_delay=1.0, pydantic_
     while n_iterations < max_retry:
         try:
             response = generate_content_lambda(temperature)
+            # --- NEW: Safely extract text even if SDK chunks it ---
+            if hasattr(response.candidates[0].content, 'parts'):
+                raw_text = "".join([part.text for part in response.candidates[0].content.parts])
+            else:
+                raw_text = response.text
+            # ------------------------------------------------------
+                
             if pydantic_model:
-                json_response = json.loads(response.text.strip("`json").replace("{{", '{').replace("}}", '}'))
+                # Use raw_text instead of response.text
+                json_response = json.loads(raw_text.strip("`json\n").replace("{{", '{').replace("}}", '}'))
                 response_json_pydantic = pydantic_model(**json_response)
                 return response_json_pydantic, json_response
-            return response.text
+            return raw_text
+            
         except (ResourceExhausted, ServiceUnavailable, DeadlineExceeded) as e:
             n_iterations += 1
             log_json("WARNING", "PHOENIX_CALL_RETRY", attempt=n_iterations,
