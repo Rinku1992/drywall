@@ -31,6 +31,7 @@ VertexAI:
             - australia-southeast1: [-33.8688, 151.2093]
         parameters:
             temperature: 0
+            response_mime_type: "application/json"
         max_retry: 5
 
 PostgreSQL:
