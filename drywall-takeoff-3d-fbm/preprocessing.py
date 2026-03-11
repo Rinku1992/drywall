@@ -5,7 +5,6 @@ import cv2
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 
-Image.MAX_IMAGE_PIXELS = None
 
 def process_page(pdf_page, vector_page, image_path_page, vector_pdf_page):
     save(pdf_page, vector_page, image_path_page, vector_pdf_page)
