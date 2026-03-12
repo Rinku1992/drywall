@@ -342,10 +342,20 @@ def load_vertex_ai_client(credentials, region="us-central1"):
 
 def classify_plan(plan_path, vertex_ai_client_parameters):
     vertex_ai_client, vertex_ai_generation_config, vertex_ai_max_retry = vertex_ai_client_parameters
-    plan_BGR = cv2.imread(plan_path)
+    # Force string conversion just in case plan_path is a Path object
+    plan_BGR = cv2.imread(str(plan_path))
     if plan_BGR is None:
         log_json("ERROR", "CLASSIFY_PLAN_FAILED", error=f"Could not read image: {plan_path}")
         return {"plan_type": "UNKNOWN", "confidence": 0.0}
+        
+    # ---> DYNAMIC DOWNSCALER: Prevent massive payloads for Vertex AI
+    max_dim = 2048
+    h, w = plan_BGR.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        plan_BGR = cv2.resize(plan_BGR, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    # <---
+        
     _, canvas_buffer_array = cv2.imencode(".png", plan_BGR)
     bytes_canvas = canvas_buffer_array.tobytes()
     system = Content(role="model", parts=[Part.from_text(ARCHITECTURAL_DRAWING_CLASSIFIER)])
