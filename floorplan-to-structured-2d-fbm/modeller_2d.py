@@ -1099,7 +1099,7 @@ class FloorPlan2D(FloorPlan):
                     contents=contents,
                     generation_config={**self._vertex_ai_generation_config, "temperature": temperature,
                                       "response_mime_type": "application/json",
-                        "response_schema": ScaleAndCeilingHeightDetectorResponse.model_json_schema()},
+                        "response_schema": DrywallPredictorCaliforniaResponse.model_json_schema()},
                 ),
                 max_retry=self._vertex_ai_max_retry,
                 pydantic_model=DrywallPredictorCaliforniaResponse,
