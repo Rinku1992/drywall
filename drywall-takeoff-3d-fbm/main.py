@@ -699,7 +699,9 @@ async def floorplan_to_2d(request: Request):
         blob.delete()
 
     size_in_bytes = Path(pdf_path).stat().st_size
-    async with timed_step("preprocess_pdf", request_id=rid, plan_id=plan_id):
+    
+    # ---> ADDED: Volume Context tracking the raw file size in bytes
+    async with timed_step("preprocess_pdf", request_id=rid, plan_id=plan_id, volume_context={"file_size_bytes": size_in_bytes}):
         floor_plan_paths_vector, floor_plan_paths_preprocessed = preprocess(pdf_path)
 
     await insert_plan(
@@ -709,8 +711,10 @@ async def floorplan_to_2d(request: Request):
         n_pages=len(floor_plan_paths_preprocessed),
         sha_256=sha_256,
     )
+    
+    # ---> ADDED: Volume Context tracking how many pages were actually extracted
     log_json("INFO", "STEP_COMPLETE", request_id=rid, step="insert_plan_in_progress",
-             n_pages=len(floor_plan_paths_preprocessed))
+             volume_context={"n_pages": len(floor_plan_paths_preprocessed)})
 
     walls_2d_all = dict(pages=list())
     status = "COMPLETED"
