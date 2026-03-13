@@ -34,7 +34,7 @@ def to_sharp(image_path_page):
 def preprocess(pdf_path, image_path="/tmp/floor_plan.png"):
     pages = convert_from_path(
         pdf_path,
-        dpi=200,
+        dpi=400,
     )
     reader = PdfReader(pdf_path)
     image_path_pages = list()
