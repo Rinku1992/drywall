@@ -53,6 +53,13 @@ def load_hyperparameters() -> dict:
 
 app = FastAPI(title="Wall Detector (Cloud Run)")
 
+
+
+HYPERPARAMETERS = load_hyperparameters()
+WALL_DETECTOR = WallDetector()  # Load ONCE at startup
+GCS_CLIENT = CloudStorageClient()
+
+
 CREDENTIALS = load_gcp_credentials()
 app.add_middleware(
     CORSMiddleware,
@@ -76,8 +83,8 @@ async def detect_wall(request: Request):
     index = parameters.get("page_number") or body.get("page_number")
     logging.info("SYSTEM: Received a Wall Detection Request")
 
-    hyperparameters = load_hyperparameters()
-    client = CloudStorageClient()
+    # hyperparameters = load_hyperparameters()
+    # client = CloudStorageClient()
     bucket = client.bucket(CREDENTIALS["CloudStorage"]["bucket_name"])
     blob_path = f"{project_id.lower()}/{plan_id.lower()}/{str(index).zfill(2)}/{CREDENTIALS["CloudStorage"]["blob_name"]}"
     blob = bucket.blob(blob_path)
@@ -86,7 +93,7 @@ async def detect_wall(request: Request):
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     blob.download_to_filename(destination_path)
 
-    wall_detector = WallDetector()
+    # wall_detector = WallDetector()
     image = wall_detector.detect(destination_path, hyperparameters)
 
     logging.info("SYSTEM: Wall Detection Completed")
