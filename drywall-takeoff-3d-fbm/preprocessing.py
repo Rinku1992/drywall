@@ -31,11 +31,39 @@ def to_sharp(image_path_page):
     cv2.imwrite(output_path, sharpened)
     return sharpened
 
+# def preprocess(pdf_path, image_path="/tmp/floor_plan.png"):
+#     pages = convert_from_path(
+#         pdf_path,
+#         dpi=400,
+#     )
+#     reader = PdfReader(pdf_path)
+#     image_path_pages = list()
+#     vector_pdf_pages = list()
+#     image_path = Path(image_path)
+#     with ThreadPoolExecutor(max_workers=3) as executor:
+#         futures = list()
+#         for index, (pdf_page, vector_page) in enumerate(zip(pages, reader.pages)):
+#             image_path_page = image_path.parent.joinpath(image_path.stem).with_suffix(f".{str(index).zfill(2)}{image_path.suffix}")
+#             vector_pdf_page = image_path.parent.joinpath(str(index).zfill(2)).joinpath(f"scaled_{image_path.stem}").with_suffix(".pdf")
+#             futures.append(
+#                 executor.submit(
+#                     process_page,
+#                     pdf_page,
+#                     vector_page,
+#                     image_path_page,
+#                     vector_pdf_page,
+#                 )
+#             )
+#             image_path_pages.append(image_path_page)
+#             vector_pdf_pages.append(vector_pdf_page)
+#         [future.result() for future in futures]
+
+#     return vector_pdf_pages, image_path_pages
+
+
 def preprocess(pdf_path, image_path="/tmp/floor_plan.png"):
-    pages = convert_from_path(
-        pdf_path,
-        dpi=400,
-    )
+    # Low-res pass: all pages at DPI=150 (for classification)
+    pages = convert_from_path(pdf_path, dpi=150)
     reader = PdfReader(pdf_path)
     image_path_pages = list()
     vector_pdf_pages = list()
@@ -59,3 +87,15 @@ def preprocess(pdf_path, image_path="/tmp/floor_plan.png"):
         [future.result() for future in futures]
 
     return vector_pdf_pages, image_path_pages
+
+
+def reprocess_pages_hires(pdf_path, page_indices, image_path="/tmp/floor_plan.png"):
+    """Re-convert specific pages at DPI=400 for FLOOR plan processing."""
+    image_path = Path(image_path)
+    for page_index in page_indices:
+        page_num = page_index + 1  # pdf2image uses 1-based indexing
+        pages_hires = convert_from_path(pdf_path, dpi=400, first_page=page_num, last_page=page_num)
+        if pages_hires:
+            image_path_page = image_path.parent.joinpath(image_path.stem).with_suffix(f".{str(page_index).zfill(2)}{image_path.suffix}")
+            pages_hires[0].save(image_path_page, "PNG")
+            to_sharp(image_path_page)
