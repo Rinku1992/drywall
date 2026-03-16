@@ -103,4 +103,4 @@ def reprocess_pages_hires(pdf_path, page_indices, image_path="/tmp/floor_plan.pn
     
     with ThreadPoolExecutor(max_workers=min(len(page_indices), 5)) as executor:
         futures = [executor.submit(_reprocess_single, pi) for pi in page_indices]
-        [f.result() for f in futures])
+        [f.result() for f in futures]
