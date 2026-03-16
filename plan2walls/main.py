@@ -55,9 +55,9 @@ app = FastAPI(title="Wall Detector (Cloud Run)")
 
 
 
-HYPERPARAMETERS = load_hyperparameters()
-WALL_DETECTOR = WallDetector()  # Load ONCE at startup
-GCS_CLIENT = CloudStorageClient()
+hyperparameters = load_hyperparameters()
+wall_detector = WallDetector()  # Load ONCE at startup
+client = CloudStorageClient()
 
 
 CREDENTIALS = load_gcp_credentials()
