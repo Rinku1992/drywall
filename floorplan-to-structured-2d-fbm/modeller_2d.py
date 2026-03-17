@@ -27,7 +27,7 @@ from prompt import (
     DrywallPredictorCaliforniaResponse,
     ScaleAndCeilingHeightDetectorResponse,
 )
-from helper import phoenix_call
+from helper import phoenix_call, extract_wall_dimension_candidates, log_json
 
 __all__ = ["FloorPlan2D"]
 
@@ -1072,20 +1072,39 @@ class FloorPlan2D(FloorPlan):
         canvas_cropped = canvas[max(0, polygon_bounding_box_Y1 - threshold_Y): polygon_bounding_box_Y2 + threshold_Y, max(0, polygon_bounding_box_X1 - threshold_X): polygon_bounding_box_X2 + threshold_X]
         centroid_polygon_X = round(sum([vertex[0] for vertex in vertices]) / len(vertices))
         centroid_polygon_Y = round(sum([vertex[1] for vertex in vertices]) / len(vertices))
-        nearest_transcription_blocks = self._load_nearest_transcription_blocks((centroid_polygon_X, centroid_polygon_Y), transcription_block_with_centroids)
+       nearest_transcription_blocks = self._load_nearest_transcription_blocks((centroid_polygon_X, centroid_polygon_Y), transcription_block_with_centroids)
         transcription_entries = list()
         for transcription, centroid in nearest_transcription_blocks.items():
             transcription_entries.append(dict(text=transcription, centroid=dict(X=centroid[0], Y=centroid[1])))
+
+        # Pre-compute dimension candidates for each wall
+        pixel_aspect_ratio = self._hyperparameters["modelling"]["pixel_aspect_ratio"]
+        for i, wall in enumerate(walls):
+            X1, Y1, X2, Y2 = wall[0]
+            candidates = extract_wall_dimension_candidates(
+                [X1, Y1, X2, Y2], nearest_transcription_blocks, pixel_aspect_ratio
+            )
+            if candidates:
+                log_json("INFO", "DIMENSION_CANDIDATES", wall_index=i,
+                         candidates=len(candidates), top_confidence=candidates[0]["confidence"])
         system = Content(role="model", parts=[Part.from_text(DRYWALL_PREDICTOR_CALIFORNIA.format(drywall_templates=drywall_templates))])
         _, canvas_buffer_array = cv2.imencode(".png", canvas_cropped)
         bytes_canvas = canvas_buffer_array.tobytes()
-        perimeter_lines = list()
-        for wall in walls:
+        # Build wall specs with dimension candidates
+        wall_specs = list()
+        for i, wall in enumerate(walls):
             X1, Y1, X2, Y2 = wall[0]
-            perimeter_lines.append(
-                dict(wall=dict(X1=int(X1), Y1=int(Y1), X2=int(X2), Y2=int(Y2)))
+            candidates = extract_wall_dimension_candidates(
+                [X1, Y1, X2, Y2], nearest_transcription_blocks, pixel_aspect_ratio
             )
-        polygon = dict(vertices=vertices.tolist(), perimeter_wall_lines=perimeter_lines, transcription_entries=transcription_entries)
+            wall_spec = dict(
+                wall=dict(X1=int(X1), Y1=int(Y1), X2=int(X2), Y2=int(Y2)),
+                dimension_candidates=candidates
+            )
+            wall_specs.append(wall_spec)
+
+        polygon = dict(vertices=vertices.tolist(), perimeter_wall_lines=wall_specs, transcription_entries=transcription_entries)
+       
         query = Content(role="user", parts=[
             Part.from_text(json.dumps(polygon)),
             Part.from_data(data=bytes_canvas, mime_type="image/png")
