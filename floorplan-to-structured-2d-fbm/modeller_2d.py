@@ -1079,11 +1079,7 @@ class FloorPlan2D(FloorPlan):
 
         # Pre-compute dimension candidates for each wall
         pixel_aspect_ratio = self._hyperparameters["modelling"]["pixel_aspect_ratio"]
-        for i, wall in enumerate(walls):
-            X1, Y1, X2, Y2 = wall[0]
-            candidates = extract_wall_dimension_candidates(
-                [X1, Y1, X2, Y2], nearest_transcription_blocks, pixel_aspect_ratio
-            )
+        
             
         system = Content(role="model", parts=[Part.from_text(DRYWALL_PREDICTOR_CALIFORNIA.format(drywall_templates=drywall_templates))])
         _, canvas_buffer_array = cv2.imencode(".png", canvas_cropped)
@@ -1131,7 +1127,12 @@ class FloorPlan2D(FloorPlan):
             
             model_polygon["ceiling"]["area"] = verify_tolerance_area(model_polygon["ceiling"]["area"], area_target, model_polygon["ceiling"]["confidence"])
             for index, (dimension_wall_predicted, wall_unnormalized )in enumerate(zip(model_polygon["wall_parameters"], walls_unnormalized)):
-                dimension_wall_rectified = verify_tolerance_distance(dimension_wall_predicted, wall_unnormalized, dimension_wall_predicted["confidence"])
+                try:
+                    conf = float(dimension_wall_predicted["confidence"])
+                except (ValueError, TypeError):
+                    conf = 0.5
+                dimension_wall_rectified = verify_tolerance_distance(dimension_wall_predicted, wall_unnormalized, conf)
+            
                 model_polygon["wall_parameters"][index] = dimension_wall_rectified
         except Exception as e:
             log_json("WARNING", "DRYWALL_PREDICTION_FAILED",
