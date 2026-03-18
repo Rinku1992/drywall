@@ -1018,6 +1018,18 @@ class FloorPlan2D(FloorPlan):
         height_default=9.125,
     ):
         def verify_tolerance_distance(dimension_wall, wall_unnormalized, confidence_score):
+            try:
+                confidence_score = float(confidence_score)
+            except (ValueError, TypeError):
+                confidence_score = 0.5
+            try:
+                dimension_wall["length"] = float(dimension_wall["length"]) if dimension_wall.get("length") else 0.0
+            except (ValueError, TypeError):
+                dimension_wall["length"] = 0.0
+            try:
+                dimension_wall["width"] = float(dimension_wall["width"]) if dimension_wall.get("width") else None
+            except (ValueError, TypeError):
+                dimension_wall["width"] = None
             if dimension_wall["length"] and dimension_wall["width"] and confidence_score >= 0.95:
                 dimension_wall["length"] = round(dimension_wall["length"], 2)
                 dimension_wall["width"] = round(dimension_wall["width"], 2)
@@ -1041,8 +1053,20 @@ class FloorPlan2D(FloorPlan):
 
             return dimension_wall
 
-        def verify_tolerance_area(area_polygon_predicted, area_polygon_target, confidence_score):
-            if area_polygon_predicted and confidence_score >= 0.9:
+        def verify_tolerance_distance(dimension_wall, wall_unnormalized, confidence_score):
+            try:
+                confidence_score = float(confidence_score)
+            except (ValueError, TypeError):
+                confidence_score = 0.5
+            try:
+                dimension_wall["length"] = float(dimension_wall["length"]) if dimension_wall.get("length") else 0.0
+            except (ValueError, TypeError):
+                dimension_wall["length"] = 0.0
+            try:
+                dimension_wall["width"] = float(dimension_wall["width"]) if dimension_wall.get("width") else None
+            except (ValueError, TypeError):
+                dimension_wall["width"] = None
+            if dimension_wall["length"] and dimension_wall["width"] and confidence_score >= 0.95:
                 return area_polygon_predicted
             if area_polygon_predicted and abs(area_polygon_target - area_polygon_predicted) > tolerance ** 2:
                 return area_polygon_target
@@ -1125,17 +1149,9 @@ class FloorPlan2D(FloorPlan):
                      ceiling_confidence=model_polygon.get("ceiling", {}).get("confidence", 0),
                      wall_confidences=[w.get("confidence", 0) for w in model_polygon.get("wall_parameters", [])])
             
-            try:
-                ceil_conf = float(model_polygon["ceiling"]["confidence"])
-            except (ValueError, TypeError):
-                ceil_conf = 0.5
-            model_polygon["ceiling"]["area"] = verify_tolerance_area(model_polygon["ceiling"]["area"], area_target, ceil_conf)
+            model_polygon["ceiling"]["area"] = verify_tolerance_area(model_polygon["ceiling"]["area"], area_target, model_polygon["ceiling"]["confidence"])
             for index, (dimension_wall_predicted, wall_unnormalized )in enumerate(zip(model_polygon["wall_parameters"], walls_unnormalized)):
-                try:
-                    conf = float(dimension_wall_predicted["confidence"])
-                except (ValueError, TypeError):
-                    conf = 0.5
-                dimension_wall_rectified = verify_tolerance_distance(dimension_wall_predicted, wall_unnormalized, conf)
+                dimension_wall_rectified = verify_tolerance_distance(dimension_wall_predicted, wall_unnormalized, dimension_wall_predicted["confidence"])
             
                 model_polygon["wall_parameters"][index] = dimension_wall_rectified
         except Exception as e:
