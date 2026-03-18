@@ -1125,7 +1125,11 @@ class FloorPlan2D(FloorPlan):
                      ceiling_confidence=model_polygon.get("ceiling", {}).get("confidence", 0),
                      wall_confidences=[w.get("confidence", 0) for w in model_polygon.get("wall_parameters", [])])
             
-            model_polygon["ceiling"]["area"] = verify_tolerance_area(model_polygon["ceiling"]["area"], area_target, model_polygon["ceiling"]["confidence"])
+            try:
+                ceil_conf = float(model_polygon["ceiling"]["confidence"])
+            except (ValueError, TypeError):
+                ceil_conf = 0.5
+            model_polygon["ceiling"]["area"] = verify_tolerance_area(model_polygon["ceiling"]["area"], area_target, ceil_conf)
             for index, (dimension_wall_predicted, wall_unnormalized )in enumerate(zip(model_polygon["wall_parameters"], walls_unnormalized)):
                 try:
                     conf = float(dimension_wall_predicted["confidence"])
