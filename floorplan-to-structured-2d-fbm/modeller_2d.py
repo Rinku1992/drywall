@@ -1218,249 +1218,254 @@ class FloorPlan2D(FloorPlan):
             model_polygon["wall_parameters"] = wall_parameters
 
         return model_polygon
-        
+
+
+#
+# PASTE THE METHOD BELOW:
+ 
     def _model_polygons_batch(
-            self,
-            batch_items,
-            drywall_templates,
-        ):
-            """
-            Send up to 5 polygons in a single Gemini call.
-     
-            Args:
-                batch_items: list of dicts, each containing:
-                    - vertices: np.array of normalized vertices
-                    - walls: perimeter walls (normalized)
-                    - area_target: polygon area in sqft
-                    - polygons_pts: interior partition pts (for green overlay)
-                    - walls_unnormalized: perimeter walls (original scale)
-                    - height_default: default ceiling height
-                    - floor_plan_path: path to floorplan image
-                    - transcription_block_with_centroids: OCR data
-                    - base_canvas: pre-read floorplan image (or None)
-                drywall_templates: formatted template string
-     
-            Returns:
-                list of model_polygon dicts (same format as _model_polygon output),
-                in the same order as batch_items.
-                On failure, returns None for the failed polygon.
-            """
-            threshold = 1000
-            tolerance = 10
-            pixel_aspect_ratio = self._hyperparameters["modelling"]["pixel_aspect_ratio"]
-     
-            # --- Build Gemini request parts for all polygons in this batch ---
-            system = Content(role="model", parts=[Part.from_text(
-                DRYWALL_PREDICTOR_CALIFORNIA_BATCH.format(drywall_templates=drywall_templates)
-            )])
-     
-            user_parts = []
-            batch_metadata = []  # Track per-polygon info for post-processing
-     
-            for i, item in enumerate(batch_items):
-                polygon_id = f"polygon_{i + 1}"
-                vertices = np.array(item["vertices"])
-                walls = item["walls"]
-                polygons_pts = item["polygons_pts"]
-                walls_unnormalized = item["walls_unnormalized"]
-                area_target = item["area_target"]
-                height_default = item["height_default"]
-                floor_plan_path = item["floor_plan_path"]
-                transcription_block_with_centroids = item["transcription_block_with_centroids"]
-                base_canvas = item.get("base_canvas")
-     
-                # --- Canvas prep (same as _model_polygon) ---
-                canvas = base_canvas.copy() if base_canvas is not None else cv2.imread(floor_plan_path)
+        self,
+        batch_items,
+        drywall_templates,
+    ):
+        """
+        Send up to 5 polygons in a single Gemini call.
+ 
+        Args:
+            batch_items: list of dicts, each containing:
+                - vertices: np.array of normalized vertices
+                - walls: perimeter walls (normalized)
+                - area_target: polygon area in sqft
+                - polygons_pts: interior partition pts (for green overlay)
+                - walls_unnormalized: perimeter walls (original scale)
+                - height_default: default ceiling height
+                - floor_plan_path: path to floorplan image
+                - transcription_block_with_centroids: OCR data
+                - base_canvas: pre-read floorplan image (or None)
+            drywall_templates: formatted template string
+ 
+        Returns:
+            list of model_polygon dicts (same format as _model_polygon output),
+            in the same order as batch_items.
+            On failure, returns None for the failed polygon.
+        """
+        threshold = 1000
+        tolerance = 10
+        pixel_aspect_ratio = self._hyperparameters["modelling"]["pixel_aspect_ratio"]
+ 
+        # --- Build Gemini request parts for all polygons in this batch ---
+        system = Content(role="model", parts=[Part.from_text(
+            DRYWALL_PREDICTOR_CALIFORNIA_BATCH.format(drywall_templates=drywall_templates)
+        )])
+ 
+        user_parts = []
+        batch_metadata = []  # Track per-polygon info for post-processing
+ 
+        for i, item in enumerate(batch_items):
+            polygon_id = f"polygon_{i + 1}"
+            vertices = np.array(item["vertices"])
+            walls = item["walls"]
+            polygons_pts = item["polygons_pts"]
+            walls_unnormalized = item["walls_unnormalized"]
+            area_target = item["area_target"]
+            height_default = item["height_default"]
+            floor_plan_path = item["floor_plan_path"]
+            transcription_block_with_centroids = item["transcription_block_with_centroids"]
+            base_canvas = item.get("base_canvas")
+ 
+            # --- Canvas prep (same as _model_polygon) ---
+            canvas = base_canvas.copy() if base_canvas is not None else cv2.imread(floor_plan_path)
+            canvas_to_overlay = canvas.copy()
+            cv2.fillPoly(canvas_to_overlay, pts=[vertices], color=(0, 0, 255))
+            canvas = cv2.addWeighted(canvas_to_overlay, 0.3, canvas, 0.7, 0)
+            for wall in walls:
+                X1, Y1, X2, Y2 = wall[0]
+                canvas = cv2.rectangle(canvas, (X1 - 10, Y1 - 10), (X2 + 10, Y2 + 10), (255, 0, 0), 3)
+            for polygon_pts in polygons_pts:
                 canvas_to_overlay = canvas.copy()
-                cv2.fillPoly(canvas_to_overlay, pts=[vertices], color=(0, 0, 255))
-                canvas = cv2.addWeighted(canvas_to_overlay, 0.3, canvas, 0.7, 0)
-                for wall in walls:
-                    X1, Y1, X2, Y2 = wall[0]
-                    canvas = cv2.rectangle(canvas, (X1 - 10, Y1 - 10), (X2 + 10, Y2 + 10), (255, 0, 0), 3)
-                for polygon_pts in polygons_pts:
-                    canvas_to_overlay = canvas.copy()
-                    cv2.fillPoly(canvas_to_overlay, pts=[polygon_pts], color=(0, 255, 0))
-                    canvas = cv2.addWeighted(canvas_to_overlay, 0.5, canvas, 0.5, 0)
-     
-                # --- Crop ---
-                bb_X1 = min(vertex[0] for vertex in vertices)
-                bb_Y1 = min(vertex[1] for vertex in vertices)
-                bb_X2 = max(vertex[0] for vertex in vertices)
-                bb_Y2 = max(vertex[1] for vertex in vertices)
-                threshold_X = max((bb_X2 - bb_X1) // 2, threshold)
-                threshold_Y = max((bb_Y2 - bb_Y1) // 2, threshold)
-                canvas_cropped = canvas[
-                    max(0, bb_Y1 - threshold_Y): bb_Y2 + threshold_Y,
-                    max(0, bb_X1 - threshold_X): bb_X2 + threshold_X
-                ]
-     
-                # --- Encode ---
-                _, canvas_buffer_array = cv2.imencode(".png", canvas_cropped)
-                bytes_canvas = canvas_buffer_array.tobytes()
-     
-                # --- Transcription ---
-                centroid_X = round(sum(v[0] for v in vertices) / len(vertices))
-                centroid_Y = round(sum(v[1] for v in vertices) / len(vertices))
-                nearest_blocks = self._load_nearest_transcription_blocks(
-                    (centroid_X, centroid_Y), transcription_block_with_centroids
+                cv2.fillPoly(canvas_to_overlay, pts=[polygon_pts], color=(0, 255, 0))
+                canvas = cv2.addWeighted(canvas_to_overlay, 0.5, canvas, 0.5, 0)
+ 
+            # --- Crop ---
+            bb_X1 = min(vertex[0] for vertex in vertices)
+            bb_Y1 = min(vertex[1] for vertex in vertices)
+            bb_X2 = max(vertex[0] for vertex in vertices)
+            bb_Y2 = max(vertex[1] for vertex in vertices)
+            threshold_X = max((bb_X2 - bb_X1) // 2, threshold)
+            threshold_Y = max((bb_Y2 - bb_Y1) // 2, threshold)
+            canvas_cropped = canvas[
+                max(0, bb_Y1 - threshold_Y): bb_Y2 + threshold_Y,
+                max(0, bb_X1 - threshold_X): bb_X2 + threshold_X
+            ]
+ 
+            # --- Encode ---
+            _, canvas_buffer_array = cv2.imencode(".png", canvas_cropped)
+            bytes_canvas = canvas_buffer_array.tobytes()
+ 
+            # --- Transcription ---
+            centroid_X = round(sum(v[0] for v in vertices) / len(vertices))
+            centroid_Y = round(sum(v[1] for v in vertices) / len(vertices))
+            nearest_blocks = self._load_nearest_transcription_blocks(
+                (centroid_X, centroid_Y), transcription_block_with_centroids
+            )
+            transcription_entries = [
+                dict(text=text, centroid=dict(X=centroid[0], Y=centroid[1]))
+                for text, centroid in nearest_blocks.items()
+            ]
+ 
+            # --- Wall specs ---
+            wall_specs = []
+            for wall in walls:
+                X1, Y1, X2, Y2 = wall[0]
+                candidates = extract_wall_dimension_candidates(
+                    [X1, Y1, X2, Y2], nearest_blocks, pixel_aspect_ratio
                 )
-                transcription_entries = [
-                    dict(text=text, centroid=dict(X=centroid[0], Y=centroid[1]))
-                    for text, centroid in nearest_blocks.items()
-                ]
-     
-                # --- Wall specs ---
-                wall_specs = []
-                for wall in walls:
-                    X1, Y1, X2, Y2 = wall[0]
-                    candidates = extract_wall_dimension_candidates(
-                        [X1, Y1, X2, Y2], nearest_blocks, pixel_aspect_ratio
-                    )
-                    wall_specs.append(dict(
-                        wall=dict(X1=int(X1), Y1=int(Y1), X2=int(X2), Y2=int(Y2)),
-                        dimension_candidates=candidates,
-                    ))
-     
-                log_json("INFO", "BATCH_DIMENSION_PRECOMPUTE",
-                         polygon_id=polygon_id,
-                         total_walls=len(wall_specs),
-                         total_candidates=sum(len(ws["dimension_candidates"]) for ws in wall_specs))
-     
-                # --- Build payload ---
-                polygon_payload = dict(
-                    polygon_id=polygon_id,
-                    vertices=vertices.tolist(),
-                    perimeter_wall_lines=wall_specs,
-                    transcription_entries=transcription_entries,
-                )
-     
-                # --- Add to user parts ---
-                user_parts.append(Part.from_text(f"\n=== {polygon_id} ==="))
-                user_parts.append(Part.from_text(json.dumps(polygon_payload)))
-                user_parts.append(Part.from_data(data=bytes_canvas, mime_type="image/png"))
-     
-                # --- Save metadata for post-processing ---
-                batch_metadata.append(dict(
-                    polygon_id=polygon_id,
-                    walls=walls,
-                    walls_unnormalized=walls_unnormalized,
-                    area_target=area_target,
-                    height_default=height_default,
-                    wall_specs=wall_specs,
+                wall_specs.append(dict(
+                    wall=dict(X1=int(X1), Y1=int(Y1), X2=int(X2), Y2=int(Y2)),
+                    dimension_candidates=candidates,
                 ))
-     
-            # --- Single Gemini call for the entire batch ---
-            query = Content(role="user", parts=user_parts)
-            contents = [system, query]
-     
-            log_json("INFO", "BATCH_GEMINI_CALL",
-                     batch_size=len(batch_items),
-                     polygon_ids=[m["polygon_id"] for m in batch_metadata])
-     
+ 
+            log_json("INFO", "BATCH_DIMENSION_PRECOMPUTE",
+                     polygon_id=polygon_id,
+                     total_walls=len(wall_specs),
+                     total_candidates=sum(len(ws["dimension_candidates"]) for ws in wall_specs))
+ 
+            # --- Build payload ---
+            polygon_payload = dict(
+                polygon_id=polygon_id,
+                vertices=vertices.tolist(),
+                perimeter_wall_lines=wall_specs,
+                transcription_entries=transcription_entries,
+            )
+ 
+            # --- Add to user parts ---
+            user_parts.append(Part.from_text(f"\n=== {polygon_id} ==="))
+            user_parts.append(Part.from_text(json.dumps(polygon_payload)))
+            user_parts.append(Part.from_data(data=bytes_canvas, mime_type="image/png"))
+ 
+            # --- Save metadata for post-processing ---
+            batch_metadata.append(dict(
+                polygon_id=polygon_id,
+                walls=walls,
+                walls_unnormalized=walls_unnormalized,
+                area_target=area_target,
+                height_default=height_default,
+                wall_specs=wall_specs,
+            ))
+ 
+        # --- Single Gemini call for the entire batch ---
+        query = Content(role="user", parts=user_parts)
+        contents = [system, query]
+ 
+        log_json("INFO", "BATCH_GEMINI_CALL",
+                 batch_size=len(batch_items),
+                 polygon_ids=[m["polygon_id"] for m in batch_metadata])
+ 
+        try:
+            _, batch_response = phoenix_call(
+                lambda temperature: self._vertex_ai_client.generate_content(
+                    contents=contents,
+                    generation_config={**self._vertex_ai_generation_config, "temperature": temperature},
+                ),
+                max_retry=self._vertex_ai_max_retry,
+                pydantic_model=BatchDrywallPredictorResponse,
+            )
+ 
+            log_json("INFO", "BATCH_GEMINI_SUCCESS",
+                     n_polygons_returned=len(batch_response.get("polygons", [])))
+ 
+        except Exception as e:
+            log_json("WARNING", "BATCH_GEMINI_FAILED", error=str(e),
+                     batch_size=len(batch_items))
+            return [None] * len(batch_items)
+ 
+        # --- Map responses by polygon_id ---
+        response_map = {}
+        for polygon_resp in batch_response.get("polygons", []):
+            pid = polygon_resp.get("polygon_id", "")
+            response_map[pid] = polygon_resp
+ 
+        # --- Post-process each polygon (tolerance verification) ---
+        results = []
+        for meta in batch_metadata:
+            pid = meta["polygon_id"]
+            raw = response_map.get(pid)
+ 
+            if raw is None:
+                log_json("WARNING", "BATCH_POLYGON_MISSING", polygon_id=pid)
+                results.append(None)
+                continue
+ 
+            # Apply same tolerance verification as _model_polygon
+            model_polygon = dict(raw)  # copy
             try:
-                _, batch_response = phoenix_call(
-                    lambda temperature: self._vertex_ai_client.generate_content(
-                        contents=contents,
-                        generation_config={**self._vertex_ai_generation_config, "temperature": temperature},
-                    ),
-                    max_retry=self._vertex_ai_max_retry,
-                    pydantic_model=BatchDrywallPredictorResponse,
-                )
-     
-                log_json("INFO", "BATCH_GEMINI_SUCCESS",
-                         n_polygons_returned=len(batch_response.get("polygons", [])))
-     
-            except Exception as e:
-                log_json("WARNING", "BATCH_GEMINI_FAILED", error=str(e),
-                         batch_size=len(batch_items))
-                return [None] * len(batch_items)
-     
-            # --- Map responses by polygon_id ---
-            response_map = {}
-            for polygon_resp in batch_response.get("polygons", []):
-                pid = polygon_resp.get("polygon_id", "")
-                response_map[pid] = polygon_resp
-     
-            # --- Post-process each polygon (tolerance verification) ---
-            results = []
-            for meta in batch_metadata:
-                pid = meta["polygon_id"]
-                raw = response_map.get(pid)
-     
-                if raw is None:
-                    log_json("WARNING", "BATCH_POLYGON_MISSING", polygon_id=pid)
-                    results.append(None)
-                    continue
-     
-                # Apply same tolerance verification as _model_polygon
-                model_polygon = dict(raw)  # copy
+                ceil_conf = float(model_polygon.get("ceiling", {}).get("confidence", 0.5))
+            except (ValueError, TypeError):
+                ceil_conf = 0.5
+ 
+            area_target = meta["area_target"]
+            area_pred = model_polygon.get("ceiling", {}).get("area", 0.0)
+            try:
+                area_pred = float(area_pred) if area_pred else 0.0
+            except (ValueError, TypeError):
+                area_pred = 0.0
+            if area_pred and ceil_conf >= 0.9:
+                model_polygon["ceiling"]["area"] = area_pred
+            elif area_pred and abs(area_target - area_pred) > tolerance ** 2:
+                model_polygon["ceiling"]["area"] = area_target
+            else:
+                model_polygon["ceiling"]["area"] = area_pred
+ 
+            for idx, (wall_pred, wall_unnorm) in enumerate(
+                zip(model_polygon.get("wall_parameters", []), meta["walls_unnormalized"])
+            ):
                 try:
-                    ceil_conf = float(model_polygon.get("ceiling", {}).get("confidence", 0.5))
+                    conf = float(wall_pred.get("confidence", 0.5))
                 except (ValueError, TypeError):
-                    ceil_conf = 0.5
-     
-                area_target = meta["area_target"]
-                area_pred = model_polygon.get("ceiling", {}).get("area", 0.0)
+                    conf = 0.5
                 try:
-                    area_pred = float(area_pred) if area_pred else 0.0
+                    length_pred = float(wall_pred.get("length", 0)) if wall_pred.get("length") else 0.0
                 except (ValueError, TypeError):
-                    area_pred = 0.0
-                if area_pred and ceil_conf >= 0.9:
-                    model_polygon["ceiling"]["area"] = area_pred
-                elif area_pred and abs(area_target - area_pred) > tolerance ** 2:
-                    model_polygon["ceiling"]["area"] = area_target
+                    length_pred = 0.0
+                try:
+                    width_pred = float(wall_pred.get("width")) if wall_pred.get("width") else None
+                except (ValueError, TypeError):
+                    width_pred = None
+ 
+                wall_pred["length"] = length_pred
+                wall_pred["width"] = width_pred
+ 
+                if length_pred and width_pred and conf >= 0.95:
+                    wall_pred["length"] = round(length_pred, 2)
+                    wall_pred["width"] = round(width_pred, 2)
                 else:
-                    model_polygon["ceiling"]["area"] = area_pred
-     
-                for idx, (wall_pred, wall_unnorm) in enumerate(
-                    zip(model_polygon.get("wall_parameters", []), meta["walls_unnormalized"])
-                ):
-                    try:
-                        conf = float(wall_pred.get("confidence", 0.5))
-                    except (ValueError, TypeError):
-                        conf = 0.5
-                    try:
-                        length_pred = float(wall_pred.get("length", 0)) if wall_pred.get("length") else 0.0
-                    except (ValueError, TypeError):
-                        length_pred = 0.0
-                    try:
-                        width_pred = float(wall_pred.get("width")) if wall_pred.get("width") else None
-                    except (ValueError, TypeError):
-                        width_pred = None
-     
-                    wall_pred["length"] = length_pred
-                    wall_pred["width"] = width_pred
-     
-                    if length_pred and width_pred and conf >= 0.95:
-                        wall_pred["length"] = round(length_pred, 2)
-                        wall_pred["width"] = round(width_pred, 2)
+                    X1, Y1, X2, Y2 = wall_unnorm[0]
+                    length_target = round(math.hypot(
+                        (X1 - X2) * self._hyperparameters["modelling"]["pixel_aspect_ratio"]["horizontal"],
+                        (Y1 - Y2) * self._hyperparameters["modelling"]["pixel_aspect_ratio"]["vertical"]
+                    ), 2)
+                    if not length_pred:
+                        wall_pred["length"] = length_target
                     else:
-                        X1, Y1, X2, Y2 = wall_unnorm[0]
-                        length_target = round(math.hypot(
-                            (X1 - X2) * self._hyperparameters["modelling"]["pixel_aspect_ratio"]["horizontal"],
-                            (Y1 - Y2) * self._hyperparameters["modelling"]["pixel_aspect_ratio"]["vertical"]
-                        ), 2)
-                        if not length_pred:
-                            wall_pred["length"] = length_target
-                        else:
-                            wall_pred["length"] = round(length_pred, 2)
-                        if not width_pred:
-                            wall_pred["width"] = self._width_in_feet
-                        else:
-                            wall_pred["width"] = round(width_pred, 2)
-                        if length_pred and abs(length_target - length_pred) > tolerance:
-                            wall_pred["length"] = length_target
-     
-                    model_polygon["wall_parameters"][idx] = wall_pred
-     
-                log_json("INFO", "BATCH_POLYGON_SUCCESS",
-                         polygon_id=pid,
-                         room_name=model_polygon.get("ceiling", {}).get("room_name", ""),
-                         n_walls=len(model_polygon.get("wall_parameters", [])))
-     
-                results.append(model_polygon)
-     
-            return results
+                        wall_pred["length"] = round(length_pred, 2)
+                    if not width_pred:
+                        wall_pred["width"] = self._width_in_feet
+                    else:
+                        wall_pred["width"] = round(width_pred, 2)
+                    if length_pred and abs(length_target - length_pred) > tolerance:
+                        wall_pred["length"] = length_target
+ 
+                model_polygon["wall_parameters"][idx] = wall_pred
+ 
+            log_json("INFO", "BATCH_POLYGON_SUCCESS",
+                     polygon_id=pid,
+                     room_name=model_polygon.get("ceiling", {}).get("room_name", ""),
+                     n_walls=len(model_polygon.get("wall_parameters", [])))
+ 
+            results.append(model_polygon)
+ 
+        return results
+ 
         
     def _add_walls_polygon(
         self,
