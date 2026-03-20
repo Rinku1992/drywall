@@ -287,3 +287,150 @@ CEILING_CHOICES = [
     "Angled-Plane",
     "Boxed-Beam"
 ]
+
+
+ 
+# ==========================================================================
+# PASTE EVERYTHING BELOW THIS LINE AT THE BOTTOM OF prompt.py
+# ==========================================================================
+ 
+# ---------------------------------------------------------------------------
+# Batch Pydantic Response Model (for multi-polygon Gemini calls)
+# ---------------------------------------------------------------------------
+ 
+class BatchSinglePolygonResponse(BaseModel):
+    """Response for one polygon within a batch."""
+    model_config = ConfigDict(extra="allow")
+    polygon_id: str
+    ceiling: Optional[Ceiling] = None
+    wall_parameters: List[WallParameter] = Field(default_factory=list)
+ 
+ 
+class BatchDrywallPredictorResponse(BaseModel):
+    """Top-level response wrapping all polygons in a batch."""
+    model_config = ConfigDict(extra="allow")
+    polygons: List[BatchSinglePolygonResponse]
+ 
+    @model_validator(mode="after")
+    def check_polygon_count(self):
+        if len(self.polygons) < 1:
+            raise ValueError("At least one polygon response required")
+        return self
+ 
+ 
+# ---------------------------------------------------------------------------
+# Batch Prompt Template
+# ---------------------------------------------------------------------------
+ 
+DRYWALL_PREDICTOR_CALIFORNIA_BATCH = """
+California residential drywall estimator. You will receive MULTIPLE polygons in a single request.
+Analyze EACH highlighted polygon independently and predict drywall specifications for each.
+ 
+BATCH INSTRUCTIONS:
+  - You will receive N polygons labeled "polygon_1", "polygon_2", etc.
+  - Each polygon has its own cropped floor plan image, vertices, perimeter walls, and transcription entries.
+  - Analyze each polygon INDEPENDENTLY.
+  - Return a JSON object with a "polygons" array containing one result per polygon.
+  - Each result MUST include "polygon_id" matching the input label.
+  - Maintain the EXACT ORDER of polygons as provided.
+ 
+PROVIDED PER POLYGON:
+  1. Polygon vertices and perimeter wall endpoints with pre-computed dimension candidates
+  2. Cropped floor plan image (red=target polygon, blue=perimeter walls, green=interior partitions)
+  3. Nearby OCR transcription entries with centroids
+ 
+EACH WALL includes:
+  - wall: endpoint coordinates
+  - dimension_candidates: pre-parsed dimensions sorted by confidence (high/medium/low)
+    Use the highest-confidence candidate. If none, use pixel-measured fallback from image.
+ 
+DRYWALL TEMPLATES: {drywall_templates}
+ 
+CLASSIFICATION RULES:
+  - Garage-adjacent / dwelling separation / corridor → 5/8" Type X, 1-hr rated (CBC R302, IRC R302.6)
+  - Bathroom / laundry / kitchen wet wall → 1/2" MR or cement board
+  - Standard interior (bedroom/living/hallway) → 1/2" regular gypsum
+  - Ceiling → 1/2" regular (5/8" if joist span >16")
+  - Use exact sku_variant and color_code from templates. Do not invent materials.
+  - waste_factor: "8-12%" standard, "12-15%" complex geometry
+  - layers: 1 unless code requires double layer
+ 
+DIMENSION RULES:
+  - Wall length: prefer dimension_candidates over pixel measurement. Confidence >=0.9 → trust directly.
+  - Wall width: default to standard stud width if not annotated.
+  - Ceiling height: use detected height or default 9'-1.5" (9.125 ft).
+  - If dimension_candidates is empty, measure from the cropped image using scale context.
+ 
+WALL_IDENTITY_PREDICTOR_INSTRUCTIONS:
+  - Horizontal wall: Y coordinates similar, X coordinates differ significantly.
+  - Vertical wall: X coordinates similar, Y coordinates differ significantly.
+  - Room Name: look near the centroid of the polygon vertices. If absent, use NULL.
+ 
+DRYWALL_PREDICTION_INSTRUCTIONS:
+  - Wall location (interior, exterior, garage, wet area)
+  - Adjacent room usage
+  - Fire separation requirements (CBC, IRC R302)
+  - Moisture and mold resistance needs
+  - Typical residential drywall standards in California
+  - Use ONLY drywall types from the provided templates.
+ 
+OUTPUT FORMAT:
+  {{
+    "polygons": [
+      {{
+        "polygon_id": "polygon_1",
+        "ceiling": {{
+          "room_name": "<Room Name / NULL>",
+          "area": <area in SQFT>,
+          "confidence": <0.0-1.0>,
+          "ceiling_type": "<Flat/Vaulted/Cathedral/Tray/Coffered/Shed/Sloped>",
+          "height": <height in feet>,
+          "slope": <slope in degrees>,
+          "slope_enabled": <true/false>,
+          "tilt_axis": "<horizontal/vertical/NULL>",
+          "drywall_assembly": {{
+            "material": "<sku_variant from templates>",
+            "color_code": [B, G, R],
+            "thickness": <thickness in feet>,
+            "layers": <int>,
+            "fire_rating": <hours>,
+            "waste_factor": "<percentage>"
+          }},
+          "code_references": ["<ref1>", "<ref2>"],
+          "recommendation": "<text>"
+        }},
+        "wall_parameters": [
+          {{
+            "room_name": "<Room Name / NULL>",
+            "length": <length in feet>,
+            "confidence": <0.0-1.0>,
+            "width": <width in feet / null>,
+            "height": <height in feet>,
+            "wall_type": "<type>",
+            "drywall_assembly": {{
+              "material": "<sku_variant from templates>",
+              "color_code": [B, G, R],
+              "thickness": <thickness in feet>,
+              "layers": <int>,
+              "fire_rating": <hours>,
+              "waste_factor": "<percentage>"
+            }},
+            "code_references": ["<ref1>"],
+            "recommendation": "<text>"
+          }}
+        ]
+      }},
+      {{
+        "polygon_id": "polygon_2",
+        ...
+      }}
+    ]
+  }}
+ 
+STRICTLY:
+  - Return ONLY the JSON object. No markdown, no commentary.
+  - One entry per polygon in the "polygons" array.
+  - wall_parameters order must match the input perimeter wall order for each polygon.
+  - BLUE drywall prediction should always appear before GREEN.
+"""
+ 
